@@ -52,6 +52,7 @@ jobs:
           echo "=== MDK-Beispielcode (Referenz fuer die Forge-API) ==="
           find src -name '*.java' -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
           sed -i -E 's/^mod_id=.*/mod_id=primevoice/; s/^mod_name=.*/mod_name=PrimeVoice/; s/^mod_version=.*/mod_version=1.0.0/; s/^mod_group_id=.*/mod_group_id=de.primevoice/; s/^mod_authors=.*/mod_authors=PrimeVoice/; s/^mod_description=.*/mod_description=Proximity Voicechat/' gradle.properties
+          grep -rl examplemod gradle.properties src 2>/dev/null | xargs -r sed -i 's/examplemod/primevoice/g'
           rm -rf src/main/java
           mkdir -p src/main/java
           cp -r "$GITHUB_WORKSPACE/forge/src/main/java/." src/main/java/
@@ -59,6 +60,100 @@ jobs:
           chmod +x gradlew
           ./gradlew build --no-daemon --stacktrace
           JAR="$(ls build/libs/PrimeVoice-Forge-26.3.jar 2>/dev/null || ls build/libs/*.jar | grep -vE 'sources|javadoc' | head -1)"
+          echo "=== Inhalt des Forge-JARs ==="; unzip -l "$JAR" | head -60
+          echo "=== mods.toml im JAR ==="; unzip -p "$JAR" META-INF/mods.toml
+          unzip -p "$JAR" META-INF/mods.toml | grep -Eq 'modId *= *"primevoice"' || { echo "FEHLER: modId in mods.toml ist nicht primevoice"; exit 1; }
+          if unzip -l "$JAR" | grep -q module-info; then echo "FEHLER: module-info.class im JAR"; exit 1; fi
+          cp "$JAR" "$GITHUB_WORKSPACE/PrimeVoice-Forge-26.3.jar"
+
+      - name: Beide JARs pruefen
+        run: |
+          ls -l PrimeVoice-Paper-26.3.jar PrimeVoice-Forge-26.3.jar PrimeVoice-Fabric-26.3.jar
+          unzip -l PrimeVoice-Paper-26.3.jar | grep -q plugin.yml
+          unzip -l PrimeVoice-Forge-26.3.jar | grep -q PrimeVoiceMod
+          unzip -l PrimeVoice-Fabric-26.3.jar | grep -q fabric.mod.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PrimeVoice-JARs
+          path: |
+            PrimeVoice-Paper-26.3.jar
+            PrimeVoice-Forge-26.3.jar
+            PrimeVoice-Fabric-26.3.jar
+
+      - name: JARs an das GitHub-Release anhaengen
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            PrimeVoice-Paper-26.3.jar
+            PrimeVoice-Forge-26.3.jar
+            PrimeVoice-Fabric-26.3.jarname: Build PrimeVoice
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Quelltext aus PrimeVoice-source.zip entpacken (falls vorhanden)
+        run: |
+          if [ -f PrimeVoice-source.zip ]; then unzip -o PrimeVoice-source.zip; fi
+          test -d paper && test -d forge && test -d fabric && test -d common && test -d client-core
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Paper-Plugin bauen
+        run: |
+          gradle -p paper build --no-daemon --stacktrace
+          cp paper/build/libs/PrimeVoice-Paper-26.3.jar .
+
+      - name: Fabric-Mod bauen (Loom 1.17, Fabric API 0.163.0+26.3)
+        run: |
+          gradle -p fabric build --no-daemon --stacktrace
+          JAR="$(ls fabric/build/libs/PrimeVoice-Fabric-26.3.jar 2>/dev/null || ls fabric/build/libs/*.jar | grep -vE 'sources|javadoc' | head -1)"
+          cp "$JAR" PrimeVoice-Fabric-26.3.jar
+
+      - name: Forge-Mod bauen (offizielles Forge-MDK 26.3-66.1.2 als Build-Grundlage)
+        run: |
+          set -e
+          FORGE=26.3-66.1.2
+          curl -fL -o mdk.zip "https://maven.minecraftforge.net/net/minecraftforge/forge/$FORGE/forge-$FORGE-mdk.zip"
+          mkdir forge-build
+          unzip -q mdk.zip -d forge-build
+          cd "$(dirname "$(find forge-build -name gradlew | head -1)")"
+          echo "=== MDK-Dateien ==="; find . -maxdepth 4 -type f | head -60
+          echo "=== MDK gradle.properties ==="; cat gradle.properties
+          echo "=== MDK-Beispielcode (Referenz fuer die Forge-API) ==="
+          find src -name '*.java' -exec sh -c 'echo "--- $1"; cat "$1"' _ {} \;
+          sed -i -E 's/^mod_id=.*/mod_id=primevoice/; s/^mod_name=.*/mod_name=PrimeVoice/; s/^mod_version=.*/mod_version=1.0.0/; s/^mod_group_id=.*/mod_group_id=de.primevoice/; s/^mod_authors=.*/mod_authors=PrimeVoice/; s/^mod_description=.*/mod_description=Proximity Voicechat/' gradle.properties
+          grep -rl examplemod gradle.properties src 2>/dev/null | xargs -r sed -i 's/examplemod/primevoice/g'
+          rm -rf src/main/java
+          mkdir -p src/main/java
+          cp -r "$GITHUB_WORKSPACE/forge/src/main/java/." src/main/java/
+          cat "$GITHUB_WORKSPACE/forge/forge-extra.gradle" >> build.gradle
+          chmod +x gradlew
+          ./gradlew build --no-daemon --stacktrace
+          JAR="$(ls build/libs/PrimeVoice-Forge-26.3.jar 2>/dev/null || ls build/libs/*.jar | grep -vE 'sources|javadoc' | head -1)"
+          echo "=== Inhalt des Forge-JARs ==="; unzip -l "$JAR" | head -60
+          echo "=== mods.toml im JAR ==="; unzip -p "$JAR" META-INF/mods.toml
+          unzip -p "$JAR" META-INF/mods.toml | grep -Eq 'modId *= *"primevoice"' || { echo "FEHLER: modId in mods.toml ist nicht primevoice"; exit 1; }
+          if unzip -l "$JAR" | grep -q module-info; then echo "FEHLER: module-info.class im JAR"; exit 1; fi
           cp "$JAR" "$GITHUB_WORKSPACE/PrimeVoice-Forge-26.3.jar"
 
       - name: Beide JARs pruefen
